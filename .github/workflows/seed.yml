@@ -1,0 +1,63 @@
+name: k60-data-seed-2g
+
+# Builds a 2 GiB APFS Data seed for the Redmi K60 (mondrian) UniXNU port on a
+# macOS runner. iOS's APFS accepts a container made by newfs_apfs/hdiutil but not
+# the one mkapfs produces, so this one step needs macOS.
+#
+# Output: k60-data-seed-2g.dbr.gz + k60-data-seed-2g.dbr.json (contains the APFS
+# volume UUID the kernel must look up).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  seed:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - name: Check out the device repository (holds the seed script)
+        uses: actions/checkout@v4
+        with:
+          repository: Emilelu/UniXNU-mondrian
+          path: device
+
+      - name: Check out the UniXNU core (holds the OS profile with the IPSW pin)
+        uses: actions/checkout@v4
+        with:
+          repository: Emilelu/UniXNU
+          ref: k60
+          path: core
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build the 2 GiB seed
+        working-directory: device
+        run: |
+          set -euo pipefail
+          python3 scripts/k60-make-data-seed.py \
+            --profile ../core/profiles/os/ipados-16.6.1-20G81/profile.toml \
+            --output ../k60-data-seed-2g.dbr \
+            --size 2g
+          ls -l ../k60-data-seed-2g.dbr*
+          python3 - <<'PY'
+          import json, pathlib
+          report = pathlib.Path('../k60-data-seed-2g.dbr.json')
+          if report.is_file():
+              data = json.loads(report.read_text())
+              print('volume uuid:', data.get('volume_uuid'))
+          PY
+
+      - name: Compress
+        run: gzip -9 -k -f k60-data-seed-2g.dbr && ls -l k60-data-seed-2g.dbr.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: k60-data-seed-2g
+          path: |
+            k60-data-seed-2g.dbr.gz
+            k60-data-seed-2g.dbr.json
+          if-no-files-found: error
+          retention-days: 7
